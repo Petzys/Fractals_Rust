@@ -1,11 +1,17 @@
 use std::fmt;
 use std::ops;
+use std::time::{Duration, Instant};
 use image::{ImageBuffer};
 
+// Scale the image (default 1920*1080)
 const SCALE: u32 = 1;
 
+// Configure width and height of image
 const WIDTH: u32 = 1920 * SCALE/2;
 const HEIGHT: u32 = 1080 * SCALE/2;
+
+// mixup RGB values (value between 0 and 0.5)
+const MIXUP: f64 = 0.2;
 
 //Complex number struct
 #[derive(Copy, Clone)]
@@ -100,19 +106,22 @@ fn hsv_to_rgb(hsv: (u16, f64, f64)) -> (u8, u8, u8) {
         _ => panic!("Error: This H value is not possible.")
     }
 
-    (((rgb_x.0 + m)*255.0) as u8, ((rgb_x.1+m)*255.0) as u8, ((rgb_x.2+m)*255.0) as u8)
+    let mut fin: (u8, u8, u8) = (((rgb_x.0 + m)*255.0) as u8, ((rgb_x.1+m)*255.0) as u8, ((rgb_x.2+m)*255.0) as u8);
+    fin = ((fin.0 as f64*MIXUP + fin.1 as f64*(1.0-MIXUP)) as u8, 
+        (fin.1 as f64*MIXUP + fin.2 as f64*(1.0-MIXUP)) as u8, 
+        (fin.2 as f64*MIXUP + fin.0 as f64*(1.0-MIXUP)) as u8);
+
+    fin
 }
 
 fn rgb_convert(i: u16) -> (u8, u8, u8) {
-    // println!("i = {}, Input to hsv_to_rgb = {:?}", i, ((i as f64/255.0), 1.0, 0.5));
-    // hsv_to_rgb((((i as f64/1000.0)*360.0) as u16, 1.0, 0.5))
     hsv_to_rgb((i%360, 1.0, 0.5))
 }
 
 fn mandelbrot(x: f64, y: f64) -> (u8, u8, u8) {
     let c0: Complex = Complex { real: (x), imag: (y) };
     let mut c: Complex = Complex { real: (0.0), imag: (0.0) };
-    for i in 1..=1000 {
+    for i in 1..=10000 {
         if c.abs() > 2.0 {
             // println!("{:?}", rgb_convert(i));
             return rgb_convert(i);
@@ -124,17 +133,22 @@ fn mandelbrot(x: f64, y: f64) -> (u8, u8, u8) {
 }
 
 fn main() {
+    // Stop time
+    let now = Instant::now();
     // Create Image Buffer, Counter and prev-variable which holds current percentage
     let mut img = ImageBuffer::new(WIDTH, HEIGHT);
     let mut count: u32 = 0;
     let mut prev: u32 = 0;
+    let mut curr: u32;
 
     // Iterate through all pixels and createa mandelbrot fractal
     for (x, y, pixel) in img.enumerate_pixels_mut() {
         // Print percentage if percentage changes
-        if (x+y)%100 == 0 && prev != (count*100/(WIDTH*HEIGHT)) {
-            prev = count*100/(WIDTH*HEIGHT);
-            println!("Done: {}%", prev);
+        curr = count*100/(WIDTH*HEIGHT);
+        if (x+y)%100 == 0 && prev != curr {
+            prev = curr;
+            println!("Running: {}%", prev);
+            // println!("Time elapsed in s: {}", now.elapsed().as_secs_f64());
         }
         let mandelx: f64 = (x as f64 - (0.75 * WIDTH as f64)) / (WIDTH as f64 / 4.0);
         let mandely: f64 = (y as f64 - (WIDTH as f64 / 4.0)) / (WIDTH as f64 / 4.0);
@@ -148,4 +162,6 @@ fn main() {
 
     // Save image in file
     img.save("mandel.bmp").unwrap();
+    println!("Done: 100%");
+    println!("Time elapsed total in s: {}", now.elapsed().as_secs_f64());
 }

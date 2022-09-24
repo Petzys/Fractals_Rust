@@ -124,14 +124,6 @@ fn mandelbrot(x: f64, y: f64) -> (u8, u8, u8) {
 }
 
 fn main() {
-
-    let hsv_color: (u16, f64, f64) = (308, 0.22, 1.0);
-    println!("{:?}", hsv_to_rgb(hsv_color));
-
-    let complex: Complex = Complex { real: (0.0), imag: (1.0) };
-    println!("{}", complex*complex);
-
-    
     // Create Image Buffer, Counter and prev-variable which holds current percentage
     let mut img = ImageBuffer::new(WIDTH, HEIGHT);
     let mut count: u32 = 0;
@@ -156,7 +148,4 @@ fn main() {
 
     // Save image in file
     img.save("mandel.bmp").unwrap();
-
-    
-
 }

@@ -4,7 +4,6 @@ use std::time::{Instant};
 use std::thread;
 use std::sync::mpsc::{Sender, Receiver, channel};
 use image::{ImageBuffer, RgbImage};
-use std::f32;
 
 /******* CONFIG *******/
 

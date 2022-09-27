@@ -1,23 +1,37 @@
 use std::fmt;
 use std::ops;
-use std::time::{Duration, Instant};
-use image::{ImageBuffer};
+use std::time::{Instant};
+use std::thread;
+use std::sync::mpsc::{Sender, Receiver, channel};
+use image::{ImageBuffer, RgbImage};
 
 // Scale the image (default 1920*1080)
-const SCALE: u32 = 1;
+const SCALE: u32 = 2;
 
 // Configure width and height of image
 const WIDTH: u32 = 1920 * SCALE/2;
 const HEIGHT: u32 = 1080 * SCALE/2;
 
-// mixup RGB values (value between 0 and 0.5)
-const MIXUP: f64 = 0.2;
+// mixup RGB values (value between 0 and 0.5), default 1.0
+const MIXUP: f64 = 1.0;
+
+// Number of Threads
+const THREADS: u32 = 1;
+const SPLIT_AFTER: u32 = WIDTH/THREADS;
 
 //Complex number struct
 #[derive(Copy, Clone)]
 struct Complex {
     real: f64,
     imag: f64,
+}
+
+// Pixel and location in image
+#[derive(Copy, Clone)]
+struct LocPixel {
+    x: u32,
+    y: u32,
+    rgb: (u8, u8, u8),
 }
 
 // Change output for complex numbers
@@ -44,6 +58,7 @@ impl ops::Add<Complex> for Complex {
     }
 }
 
+// Change - Operator for complex numbers
 impl ops::Sub<Complex> for Complex {
     type Output = Complex;
 
@@ -56,6 +71,7 @@ impl ops::Sub<Complex> for Complex {
     }
 }
 
+// Change * Operator for complex numbers
 impl ops::Mul<Complex> for Complex {
     
     type Output = Complex;
@@ -69,6 +85,7 @@ impl ops::Mul<Complex> for Complex {
     } 
 }
 
+// Change / Operator for complex numbers
 impl ops::Div<Complex> for Complex {
     
     type Output = Complex;
@@ -88,8 +105,22 @@ impl Complex {
     fn abs(&self) -> f64 {
         (self.real*self.real+self.imag*self.imag).sqrt()
     }
+
+    fn pow (self, exp: i32) -> Complex {
+        let mut new: Complex = self.clone();
+        for _ in 0..exp.abs()-1 {
+            new = new*self;
+        }
+
+        if exp < 0 {
+            new = Complex {real:(1.0), imag:(0.0)}/new;
+        }
+
+        new
+    }
 }
 
+// Convert HSV to RGB values
 fn hsv_to_rgb(hsv: (u16, f64, f64)) -> (u8, u8, u8) {
     let c: f64 = hsv.1 * hsv.2;
     let a: f64 = (hsv.0 as f64/60.0)%2.0-1.0;
@@ -114,10 +145,12 @@ fn hsv_to_rgb(hsv: (u16, f64, f64)) -> (u8, u8, u8) {
     fin
 }
 
+// Converter to use fix S&V
 fn rgb_convert(i: u16) -> (u8, u8, u8) {
     hsv_to_rgb((i%360, 1.0, 0.5))
 }
 
+// Mandelbrot function
 fn mandelbrot(x: f64, y: f64) -> (u8, u8, u8) {
     let c0: Complex = Complex { real: (x), imag: (y) };
     let mut c: Complex = Complex { real: (0.0), imag: (0.0) };
@@ -126,17 +159,74 @@ fn mandelbrot(x: f64, y: f64) -> (u8, u8, u8) {
             // println!("{:?}", rgb_convert(i));
             return rgb_convert(i);
         }
-        c = c * c + c0;
+        c = c.pow(2) + c0;
         // println!("Current i= {}, Current c={}", i, c);
     }
     (0,0,0)
 }
 
+// Creates tasks for threads
+fn thread_tasker(id: u32, sender: Sender<Vec<Vec<LocPixel>>>) {
+    let mut pix_vector: Vec<Vec<LocPixel>> = vec![vec![]];
+    let mut count: u32 = 0;
+    let mut prev: u32 = 0;
+    let mut curr: u32;
+    for x in id*SPLIT_AFTER..(id+1)*SPLIT_AFTER{
+        pix_vector.push(vec![]);
+        for y in 0..HEIGHT{
+            // Print percentage if percentage changes
+            curr = count*100/(SPLIT_AFTER*HEIGHT);
+            if (x+y)%100 == 0 && prev != curr {
+                prev = curr;
+                println!("Thread {}, Running: {}%", id, prev);
+                // println!("Time elapsed in s: {}", now.elapsed().as_secs_f64());
+            }
+            let mandelx: f64 = (x as f64 - (0.75 * WIDTH as f64)) / (WIDTH as f64 / 4.0);
+            let mandely: f64 = (y as f64 - (WIDTH as f64 / 4.0)) / (WIDTH as f64 / 4.0);
+            // Run mandelbrot
+            let rgb: (u8, u8, u8) = mandelbrot(mandelx, mandely);
+    
+            pix_vector[(x-id*SPLIT_AFTER) as usize].push(LocPixel {x:x, y:y, rgb:rgb});
+            count = count+1;
+        }
+    } 
+    
+    sender.send(pix_vector).unwrap();
+}
+
+// Main function
 fn main() {
     // Stop time
     let now = Instant::now();
     // Create Image Buffer, Counter and prev-variable which holds current percentage
-    let mut img = ImageBuffer::new(WIDTH, HEIGHT);
+    let mut img: RgbImage = ImageBuffer::new(WIDTH as u32, HEIGHT as u32);
+
+    // Create sender and receiver for thread channel
+    let (sender, receiver): (Sender<Vec<Vec<LocPixel>>>, Receiver<Vec<Vec<LocPixel>>>) = channel();
+    
+    // split tasks for threads if picture can be equally split
+    if WIDTH%THREADS == 0 {
+        println!("Starting Threads...");
+        for i in 0..THREADS {
+            // clone sender for each thread
+            let sender: Sender<Vec<Vec<LocPixel>>> = sender.clone();
+            println!("Spawning Thread no. {}", i);
+            thread::spawn(move || {
+                thread_tasker(i, sender);
+            });
+        } 
+
+        // receive picture parts from threads and combine them to whole picture
+        for _ in 0..THREADS {
+            for x in receiver.recv().unwrap() {
+                for y in x {
+                    img.put_pixel(y.x, y.y, image::Rgb([y.rgb.0,y.rgb.1,y.rgb.2]));
+                }
+            }
+        }
+    }
+
+    /* OLD, SINGLE THREADED VERSION (uncomment to run)
     let mut count: u32 = 0;
     let mut prev: u32 = 0;
     let mut curr: u32;
@@ -154,11 +244,12 @@ fn main() {
         let mandely: f64 = (y as f64 - (WIDTH as f64 / 4.0)) / (WIDTH as f64 / 4.0);
         // Run mandelbrot
         let rgb: (u8, u8, u8) = mandelbrot(mandelx, mandely);
-        //println!("X={}, MandelX={}, Y={}, MandelY{}, RGB={:?}", x, mandelx, y, mandely, rgb);
+        // println!("X={}, MandelX={}, Y={}, MandelY{}, RGB={:?}", x, mandelx, y, mandely, rgb);
         // Add Pixel to image
         *pixel = image::Rgb([rgb.0,rgb.1,rgb.2]);
         count = count + 1;
-    } 
+    } */
+    
 
     // Save image in file
     img.save("mandel.bmp").unwrap();

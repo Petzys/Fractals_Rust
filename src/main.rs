@@ -4,21 +4,22 @@ use std::time::{Instant};
 use std::thread;
 use std::sync::mpsc::{Sender, Receiver, channel};
 use image::{ImageBuffer, RgbImage};
+use std::f32;
 
 /******* CONFIG *******/
 
-// Scale the image (default 1920*1080)
+// Scale the image (default 1920*1080, value: 1)
 const SCALE: u32 = 2;
 
 // Configure width and height of image
-const WIDTH: u32 = 1920 * SCALE/2;
-const HEIGHT: u32 = 1080 * SCALE/2;
+const WIDTH: u32 = 1920 * SCALE.pow(2);
+const HEIGHT: u32 = 1080 * SCALE.pow(2);
 
 // mixup RGB values (value between 0 and 0.5), default 1.0
-const MIXUP: f64 = 1.0;
+const MIXUP: f64 = 0.3;
 
 // Number of Threads, use 2^x
-const THREADS: u32 = 16;
+const THREADS: u32 = 32;
 const SPLIT_AFTER: u32 = WIDTH/THREADS;
 
 /******* MAIN *******/
@@ -31,14 +32,14 @@ fn main() {
     let mut img: RgbImage = ImageBuffer::new(WIDTH as u32, HEIGHT as u32);
 
     // Create sender and receiver for thread channel
-    let (sender, receiver): (Sender<Vec<LocPixel>>, Receiver<Vec<LocPixel>>) = channel();
+    let (sender, receiver): (Sender<ImagePart>, Receiver<ImagePart>) = channel();
     
     // split tasks for threads if picture can be equally split
     if WIDTH%THREADS == 0 {
         println!("Starting Threads...");
         for i in 0..THREADS {
             // clone sender for each thread
-            let sender: Sender<Vec<LocPixel>> = sender.clone();
+            let sender: Sender<ImagePart> = sender.clone();
             println!("Spawning Thread no. [{:2}]", i);
             thread::spawn(move || {
                 thread_tasker(i, sender);
@@ -47,8 +48,11 @@ fn main() {
 
         // receive picture parts from threads and combine them to whole picture
         for _ in 0..THREADS {
-            for pixel in receiver.recv().unwrap() {
-                img.put_pixel(pixel.x, pixel.y, image::Rgb([pixel.rgb.0,pixel.rgb.1,pixel.rgb.2]));
+            let image_part: ImagePart = receiver.recv().unwrap();
+            for (pos, pixel) in image_part.rgb.iter().enumerate() {
+                let x = pos as u32%SPLIT_AFTER+image_part.id*SPLIT_AFTER;
+                let y = pos as u32/SPLIT_AFTER;
+                img.put_pixel(x, y, image::Rgb([pixel.0,pixel.1,pixel.2]));
             }
         }
     }
@@ -92,11 +96,10 @@ struct Complex {
     imag: f64,
 }
 // Pixel and location in image
-#[derive(Copy, Clone)]
-struct LocPixel {
-    x: u32,
-    y: u32,
-    rgb: (u8, u8, u8),
+#[derive(Clone)]
+struct ImagePart {
+    id: u32,
+    rgb: Vec<(u8, u8, u8)>,
 }
 
 /******* OVERRIDE METHODS FOR STRUCTS *******/
@@ -237,8 +240,8 @@ fn mandelbrot(x: f64, y: f64) -> (u8, u8, u8) {
 /******* MULTITHREADER *******/
 
 // Creates tasks for threads
-fn thread_tasker(id: u32, sender: Sender<Vec<LocPixel>>) {
-    let mut pix_vector: Vec<LocPixel> = vec![];
+fn thread_tasker(id: u32, sender: Sender<ImagePart>) {
+    let mut pix_vector: Vec<(u8, u8, u8)> = vec![];
     let mut count: u32 = 0;
     let mut prev: u32 = 0;
     let mut curr: u32;
@@ -256,10 +259,10 @@ fn thread_tasker(id: u32, sender: Sender<Vec<LocPixel>>) {
             // Run mandelbrot
             let rgb: (u8, u8, u8) = mandelbrot(mandelx, mandely);
     
-            pix_vector.push(LocPixel {x:x, y:y, rgb:rgb});
+            pix_vector.push(rgb);
             count = count+1;
         }
     } 
     
-    sender.send(pix_vector).unwrap();
+    sender.send(ImagePart { id: (id), rgb: (pix_vector) }).unwrap();
 }
